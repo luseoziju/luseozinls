@@ -1,9 +1,9 @@
-name: Vong_Lap_Tu_Dong_Docker
+name: Vong_Lap_Co_Tailscale
 
 on:
-  workflow_dispatch: # Nút bấm chạy tay lần đầu
+  workflow_dispatch:
   repository_dispatch:
-    types: [vong_lap_moi] # Lệnh tự gọi máy mới
+    types: [vong_lap_moi]
 
 jobs:
   run_docker:
@@ -12,22 +12,26 @@ jobs:
       - name: 1. Lay code ve
         uses: actions/checkout@v4
 
-      - name: 2. Bat dau chay Docker
-        run: |
-          # Mo file compose.yaml cua ban
-          docker compose up -d
-          
-          echo "Dang treo máy... Se tu bat may moi sau 5 tieng 40 phut."
-          
-          # Đợi 5 tiếng 40 phút (20400 giây) rồi mới chạy bước tiếp theo
-          sleep 20400
+      - name: 2. Ket noi Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
 
-      - name: 3. Tu goi may tiep theo (Dung MY_TOKEN ban da tao)
-        if: always() # Du buoc 2 co loi van phai goi may moi de khong bi dut xich
+      - name: 3. Chay Docker Windows
+        run: |
+          docker compose up -d
+          echo "Dang cho Windows khoi dong..."
+          sleep 60
+          echo "IP Tailscale cua ban la:"
+          tailscale ip -4
+          echo "Dang treo may..."
+          sleep 19800
+
+      - name: 4. Tu goi may tiep theo
+        if: always()
         run: |
           curl -X POST \
           -H "Authorization: token ${{ secrets.MY_TOKEN }}" \
           -H "Accept: application/vnd.github.v3+json" \
           https://api.github.com/repos/${{ github.repository }}/dispatches \
           -d '{"event_type": "vong_lap_moi"}'
-          echo "Da gui lenh mo may moi thanh cong!"
