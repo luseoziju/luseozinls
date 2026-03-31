@@ -28,7 +28,7 @@ jobs:
           sleep 19800
 
       - name: 4. Tu goi may tiep theo
-        if: always()
+        if: success()
         run: |
           curl -X POST \
           -H "Authorization: token ${{ secrets.MY_TOKEN }}" \
