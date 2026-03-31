@@ -1,0 +1,33 @@
+name: Vong_Lap_Tu_Dong_Docker
+
+on:
+  workflow_dispatch: # Nút bấm chạy tay lần đầu
+  repository_dispatch:
+    types: [vong_lap_moi] # Lệnh tự gọi máy mới
+
+jobs:
+  run_docker:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 1. Lay code ve
+        uses: actions/checkout@v4
+
+      - name: 2. Bat dau chay Docker
+        run: |
+          # Mo file compose.yaml cua ban
+          docker compose up -d
+          
+          echo "Dang treo máy... Se tu bat may moi sau 5 tieng 40 phut."
+          
+          # Đợi 5 tiếng 40 phút (20400 giây) rồi mới chạy bước tiếp theo
+          sleep 20400
+
+      - name: 3. Tu goi may tiep theo (Dung MY_TOKEN ban da tao)
+        if: always() # Du buoc 2 co loi van phai goi may moi de khong bi dut xich
+        run: |
+          curl -X POST \
+          -H "Authorization: token ${{ secrets.MY_TOKEN }}" \
+          -H "Accept: application/vnd.github.v3+json" \
+          https://api.github.com/repos/${{ github.repository }}/dispatches \
+          -d '{"event_type": "vong_lap_moi"}'
+          echo "Da gui lenh mo may moi thanh cong!"
