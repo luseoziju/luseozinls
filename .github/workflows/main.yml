@@ -1,1 +1,83 @@
+name: Tailscale_Windows_All_In_One
 
+on:
+  workflow_dispatch:
+    inputs:
+      link_iso:
+        description: 'Dán link ISO Windows của bạn vào đây'
+        required: true
+        default: 'https://example.com/windows.iso'
+  repository_dispatch:
+    types: [vong_lap_moi]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 1. Lấy code về
+        uses: actions/checkout@v4
+
+      - name: 2. Kết nối Tailscale tự động
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
+          hostname: github-windows-vps
+
+      - name: 3. Cài đặt môi trường & Tải ISO
+        run: |
+          sudo chmod 666 /dev/kvm
+          sudo mkdir -p /isos/
+
+          # Tải Driver VirtIO để nhận ổ cứng/mạng
+          sudo wget -O /isos/driver.iso https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/archive-virtio/virtio-win-0.1.240-1/virtio-win-0.1.240.iso &>/dev/null &
+
+          # Lấy link ISO từ input hoặc vòng lặp
+          ISO_URL="${{ github.event.inputs.link_iso }}"
+          if [ -z "$ISO_URL" ]; then ISO_URL="https://software.download.prss.microsoft.com/db/Win11_23H2_English_x64v2.iso"; fi
+
+          sudo wget -O /isos/a.iso "$ISO_URL" &>/dev/null &
+
+          echo "Đang tải các file ISO, vui lòng đợi..."
+          while ps axg | grep -vw grep | grep -w wget > /dev/null; do sleep 5; done
+          echo "Tải xong ISO."
+
+      - name: 4. Tạo file cấu hình Docker tại chỗ
+        run: |
+          cat <<EOF > docker-compose.yaml
+          services:
+            windows:
+              image: dockurr/windows
+              container_name: windows
+              network_mode: host
+              environment:
+                DISK_SIZE: "64G"
+                RAM_SIZE: "12G"
+                CPU_CORES: "4"
+              devices:
+                - /dev/kvm
+              cap_add:
+                - NET_ADMIN
+              volumes:
+                - /isos/a.iso:/custom.iso
+                - /isos/driver.iso:/driver.iso
+              restart: on-failure
+          EOF
+
+      - name: 5. Khởi chạy Windows
+        run: |
+          sudo docker compose up -d
+          echo "Đang chờ Windows khởi động..."
+          sleep 60
+          echo "IP Tailscale của bạn là:"
+          tailscale ip -4
+          echo "Hệ thống sẽ treo trong 5 giờ để bạn sử dụng..."
+          sleep 18000
+
+      - name: 6. Kích hoạt vòng lặp tiếp theo
+        if: always()
+        run: |
+          curl -X POST \
+          -H "Authorization: token ${{ secrets.MY_TOKEN }}" \
+          -H "Accept: application/vnd.github.v3+json" \
+          https://api.github.com/repos/${{ github.repository }}/dispatches \
+          -d '{"event_type": "vong_lap_moi"}'
