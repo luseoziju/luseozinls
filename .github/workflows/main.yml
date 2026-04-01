@@ -1,1 +1,79 @@
+name: Tailscale_Windows_V4_Pro
 
+on:
+  workflow_dispatch:
+    inputs:
+      link_iso:
+        description: 'Dán link ISO Windows vào đây'
+        required: true
+        default: 'https://example.com/win.iso'
+  repository_dispatch:
+    types: [vong_lap_moi]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 1. Checkout Code (v4)
+        uses: actions/checkout@v4
+
+      - name: 2. Kết nối Tailscale (v2 - Bản ổn định nhất hiện tại)
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
+          hostname: github-vps-pro
+
+      - name: 3. Tải ISO và Driver VirtIO
+        run: |
+          sudo chmod 666 /dev/kvm
+          sudo mkdir -p /isos/
+          # Tải Driver để nhận diện mạng và ổ cứng trong Docker
+          sudo wget -O /isos/driver.iso https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/archive-virtio/virtio-win-0.1.240-1/virtio-win-0.1.240.iso &>/dev/null &
+
+          # Lấy link ISO từ input
+          ISO_URL="${{ github.event.inputs.link_iso }}"
+          sudo wget -O /isos/a.iso "$ISO_URL" &>/dev/null &
+
+          echo "Đang tải dữ liệu, vui lòng đợi..."
+          while ps axg | grep -vw grep | grep -w wget > /dev/null; do sleep 5; done
+          echo "Tải xong."
+
+      - name: 4. Gộp cấu hình Docker (Network Mode Host)
+        run: |
+          # Tạo trực tiếp file compose để đảm bảo không lỗi kết nối
+          cat <<EOF > docker-compose.yaml
+          services:
+            windows:
+              image: dockurr/windows
+              container_name: windows
+              network_mode: host # Giúp Tailscale thông thẳng vào Windows
+              environment:
+                DISK_SIZE: "64G"
+                RAM_SIZE: "12G"
+                CPU_CORES: "4"
+              devices:
+                - /dev/kvm
+              cap_add:
+                - NET_ADMIN
+              volumes:
+                - /isos/a.iso:/custom.iso
+                - /isos/driver.iso:/driver.iso
+              restart: on-failure
+          EOF
+
+      - name: 5. Khởi chạy và Treo máy
+        run: |
+          sudo docker compose up -d
+          echo "IP Tailscale để kết nối RDP:"
+          tailscale ip -4
+          echo "Đợi 5-10 phút để Windows khởi động dịch vụ RDP..."
+          sleep 18000
+
+      - name: 6. Vòng lặp tự động (Auto-loop)
+        if: always()
+        run: |
+          curl -X POST \
+          -H "Authorization: token ${{ secrets.MY_TOKEN }}" \
+          -H "Accept: application/vnd.github.v3+json" \
+          https://api.github.com/repos/${{ github.repository }}/dispatches \
+          -d '{"event_type": "vong_lap_moi"}'
