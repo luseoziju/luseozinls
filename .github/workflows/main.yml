@@ -1,31 +1,65 @@
-name: Tailscale - Docker
+name: Tailscale_Windows_Full_Auto
 
-on: 
+on:
   workflow_dispatch:
     inputs:
       link_iso:
-        description: 'dán link iso của ae vô đây'
+        description: 'Dán link ISO Windows của bạn vào đây'
         required: true
- 
+        default: 'https://example.com/windows.iso'
+  repository_dispatch:
+    types: [vong_lap_moi]
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: chuẩn bị phần mềm
-        run: |
-          sudo apt update -y
-          sudo apt install wget curl -y
-          curl -fsSL https://tailscale.com/install.sh | sh
-          sudo tailscale up
-      - name: cài win và khởi chạy
+      - name: 1. Lay code ve
+        uses: actions/checkout@v4
+
+      - name: 2. Ket noi Tailscale tu dong
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
+          hostname: github-windows-vps
+
+      - name: 3. Cai dat moi truong & Tai ISO
         run: |
           sudo chmod 666 /dev/kvm
-          sudo mkdir /isos/
-          sudo wget -O /isos/a.iso "${{ github.event.inputs.link_iso }}" &>/dev/null &
-          while ps axg | grep -vw grep | grep -w wget > /dev/null; do sleep 1; done
+          sudo mkdir -p /isos/
+
+          # Tai Driver VirtIO
           sudo wget -O /isos/driver.iso https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/archive-virtio/virtio-win-0.1.240-1/virtio-win-0.1.240.iso &>/dev/null &
-          while ps axg | grep -vw grep | grep -w wget > /dev/null; do sleep 1; done
-          wget https://raw.githubusercontent.com/socaca/buluxury/refs/heads/main/compose.yaml
+
+          # Lay link ISO tu input hoac mac dinh
+          ISO_URL="${{ github.event.inputs.link_iso }}"
+          if [ -z "$ISO_URL" ]; then ISO_URL="DÁN_LINK_ISO_MẶC_ĐỊNH_VÀO_ĐÂY"; fi
+
+          sudo wget -O /isos/a.iso "$ISO_URL" &>/dev/null &
+
+          echo "Đang tải các file ISO, vui lòng đợi..."
+          while ps axg | grep -vw grep | grep -w wget > /dev/null; do sleep 5; done
+          echo "Tải xong ISO."
+
+      - name: 4. Khoi chay Docker Windows
+        run: |
+          # Chạy ngầm để không kẹt tiến trình loop
+          sudo docker compose up -d
+
+          echo "Doi Windows boot va nhan IP..."
+          sleep 60
+
+          echo "IP Tailscale cua ban la:"
           tailscale ip -4
-          echo "thanh cong, ket noi bang port 8006 o trinh duyet Chrome"
-          sudo docker compose up
+
+          echo "He thong se treo trong 5 gio..."
+          sleep 18000
+
+      - name: 5. Kick hoat vong lap tiep theo
+        if: always()
+        run: |
+          curl -X POST \
+          -H "Authorization: token ${{ secrets.MY_TOKEN }}" \
+          -H "Accept: application/vnd.github.v3+json" \
+          https://api.github.com/repos/${{ github.repository }}/dispatches \
+          -d '{"event_type": "vong_lap_moi"}'
