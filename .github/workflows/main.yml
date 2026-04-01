@@ -1,1 +1,77 @@
+name: Tailscale_Windows_V4_Fail_Fast
 
+on:
+  workflow_dispatch:
+    inputs:
+      link_iso:
+        description: 'Dán link ISO Windows'
+        required: true
+        default: 'https://example.com/win.iso'
+  repository_dispatch:
+    types: [vong_lap_moi]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # Mặc định GitHub Actions sẽ dừng nếu một bước thất bại (exit code != 0)
+    steps:
+      - name: 1. Checkout v4
+        uses: actions/checkout@v4
+
+      - name: 2. Kết nối Tailscale (v2)
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
+          hostname: github-vps-pro
+
+      - name: 3. Tải ISO và Driver
+        run: |
+          set -e # Dừng ngay nếu có lệnh wget hoặc mkdir lỗi
+          sudo chmod 666 /dev/kvm
+          sudo mkdir -p /isos/
+
+          # Tải Driver VirtIO
+          sudo wget -O /isos/driver.iso https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/archive-virtio/virtio-win-0.1.240-1/virtio-win-0.1.240.iso
+
+          # Tải ISO Windows
+          ISO_URL="${{ github.event.inputs.link_iso }}"
+          sudo wget -O /isos/a.iso "$ISO_URL"
+
+          echo "Tải dữ liệu hoàn tất."
+
+      - name: 4. Khởi chạy Docker Windows
+        run: |
+          set -e
+          # Xóa các file cũ để tránh xung đột
+          rm -f compose.yaml docker-compose.yaml
+
+          # Chạy trực tiếp bằng Docker Run
+          sudo docker run -d \
+            --name windows \
+            --device /dev/kvm \
+            --cap-add NET_ADMIN \
+            --network host \
+            -v /isos/a.iso:/custom.iso \
+            -v /isos/driver.iso:/driver.iso \
+            -e DISK_SIZE="64G" \
+            -e RAM_SIZE="12G" \
+            -e CPU_CORES="4" \
+            --restart on-failure \
+            dockurr/windows
+
+      - name: 5. Hiện IP và Treo máy
+        run: |
+          echo "IP Tailscale của bạn là:"
+          tailscale ip -4
+          echo "Đang treo máy... Nếu bước này bị ngắt, workflow sẽ báo đỏ."
+          sleep 18000
+
+      - name: 6. Kích hoạt vòng lặp (Chỉ chạy khi thành công)
+        # KHÔNG dùng if: always() ở đây.
+        # Nếu bước 3, 4 hoặc 5 lỗi, bước 6 sẽ bị SKIP (bỏ qua), vòng lặp sẽ dừng.
+        run: |
+          curl -X POST \
+            -H "Authorization: token ${{ secrets.MY_TOKEN }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/${{ github.repository }}/dispatches \
+            -d '{"event_type": "vong_lap_moi"}'
