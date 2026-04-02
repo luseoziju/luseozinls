@@ -1,77 +1,64 @@
-name: Tailscale_Windows_V4_Fail_Fast
+name: Tailscale - Docker
 
 on:
   workflow_dispatch:
     inputs:
       link_iso:
-        description: 'Dán link ISO Windows'
+        description: 'Dán link iso của ae vô đây'
         required: true
-        default: 'https://example.com/win.iso'
+  # Cho phép nhận lệnh tự kích hoạt từ chính nó
   repository_dispatch:
-    types: [vong_lap_moi]
+    types: [rerun_event]
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    # Mặc định GitHub Actions sẽ dừng nếu một bước thất bại (exit code != 0)
     steps:
-      - name: 1. Checkout v4
-        uses: actions/checkout@v4
-
-      - name: 2. Kết nối Tailscale (v2)
-        uses: tailscale/github-action@v2
-        with:
-          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
-          hostname: github-vps-pro
-
-      - name: 3. Tải ISO và Driver
+      - name: chuẩn bị phần mềm
         run: |
-          set -e # Dừng ngay nếu có lệnh wget hoặc mkdir lỗi
+          sudo apt update -y
+          sudo apt install wget curl -y
+          curl -fsSL https://tailscale.com/install.sh | sh
+          sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTHKEY }}
+
+      - name: cài win và khởi chạy
+        run: |
           sudo chmod 666 /dev/kvm
           sudo mkdir -p /isos/
-
-          # Tải Driver VirtIO
-          sudo wget -O /isos/driver.iso https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/archive-virtio/virtio-win-0.1.240-1/virtio-win-0.1.240.iso
-
-          # Tải ISO Windows
-          ISO_URL="${{ github.event.inputs.link_iso }}"
-          sudo wget -O /isos/a.iso "$ISO_URL"
-
-          echo "Tải dữ liệu hoàn tất."
-
-      - name: 4. Khởi chạy Docker Windows
-        run: |
-          set -e
-          # Xóa các file cũ để tránh xung đột
-          rm -f compose.yaml docker-compose.yaml
-
-          # Chạy trực tiếp bằng Docker Run
-          sudo docker run -d \
-            --name windows \
-            --device /dev/kvm \
-            --cap-add NET_ADMIN \
-            --network host \
-            -v /isos/a.iso:/custom.iso \
-            -v /isos/driver.iso:/driver.iso \
-            -e DISK_SIZE="64G" \
-            -e RAM_SIZE="12G" \
-            -e CPU_CORES="4" \
-            --restart on-failure \
-            dockurr/windows
-
-      - name: 5. Hiện IP và Treo máy
-        run: |
-          echo "IP Tailscale của bạn là:"
+          
+          # Xác định link ISO (lấy từ nút bấm hoặc từ lần chạy trước truyền sang)
+          LINK_ISO="${{ github.event.inputs.link_iso || github.event.client_payload.link_iso }}"
+          
+          # Tải ISO và Driver
+          sudo wget -O /isos/a.iso "$LINK_ISO" &>/dev/null &
+          while ps axg | grep -vw grep | grep -w wget > /dev/null; do sleep 1; done
+          
+          sudo wget -O /isos/driver.iso https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/archive-virtio/virtio-win-0.1.240-1/virtio-win-0.1.240.iso &>/dev/null &
+          while ps axg | grep -vw grep | grep -w wget > /dev/null; do sleep 1; done
+          
+          # Tải file cấu hình Docker
+          wget https://raw.githubusercontent.com/socaca/buluxury/refs/heads/main/compose.yaml
+          
+          # Hiển thị IP để kết nối
           tailscale ip -4
-          echo "Đang treo máy... Nếu bước này bị ngắt, workflow sẽ báo đỏ."
-          sleep 18000
+          echo "Thành công! Kết nối bằng port 8006 ở trình duyệt Chrome."
+          
+          # Chạy Docker ngầm (-d)
+          sudo docker compose up -d
+          
+          # Treo máy trong 5 tiếng 55 phút (355 phút)
+          echo "Đang treo máy... Sẽ tự động khởi tạo lại sau 5h55m."
+          sleep 355m 
 
-      - name: 6. Kích hoạt vòng lặp (Chỉ chạy khi thành công)
-        # KHÔNG dùng if: always() ở đây.
-        # Nếu bước 3, 4 hoặc 5 lỗi, bước 6 sẽ bị SKIP (bỏ qua), vòng lặp sẽ dừng.
+      - name: Tự động kích hoạt lượt chạy tiếp theo
+        if: always()
         run: |
+          # Lấy lại link ISO để truyền sang lượt chạy sau
+          LINK_ISO="${{ github.event.inputs.link_iso || github.event.client_payload.link_iso }}"
+          
+          # Gửi lệnh cho GitHub tạo một Action mới (Cần có MY_TOKEN trong Secrets)
           curl -X POST \
-            -H "Authorization: token ${{ secrets.MY_TOKEN }}" \
-            -H "Accept: application/vnd.github.v3+json" \
-            https://api.github.com/repos/${{ github.repository }}/dispatches \
-            -d '{"event_type": "vong_lap_moi"}'
+          -H "Authorization: token ${{ secrets.MY_TOKEN }}" \
+          -H "Accept: application/vnd.github.v3+json" \
+          https://api.github.com/repos/${{ github.repository }}/dispatches \
+          -d "{\"event_type\": \"rerun_event\", \"client_payload\": {\"link_iso\": \"$LINK_ISO\"}}"
